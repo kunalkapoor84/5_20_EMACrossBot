@@ -75,6 +75,7 @@ class StateManager:
         strike: float = 0.0,
         symbol: str = "",
         expiry: str = "",
+        armed_direction: str | None = None,
     ) -> dict:
         """Build a state dictionary for persistence."""
         return {
@@ -98,6 +99,7 @@ class StateManager:
             "strike": strike,
             "symbol": symbol,
             "expiry": expiry,
+            "armed_direction": armed_direction,
         }
 
     def reconcile_with_broker(self, state: dict | None, broker_positions: list[dict], trading_security_id: str | None = None) -> dict:
@@ -127,6 +129,7 @@ class StateManager:
                 daily_trade_count=0,
                 session_active=True,
                 last_processed_candle_ts=None,
+                armed_direction=None,
             )
 
         # Find our instrument in broker positions
@@ -158,6 +161,7 @@ class StateManager:
                 state["strike"] = 0
                 state["symbol"] = ""
                 state["expiry"] = ""
+                state["armed_direction"] = None
         else:
             # Broker has a position — use broker data as truth
             net_qty = int(our_position.get("netQty", 0))

@@ -12,6 +12,7 @@ excel_daily/
 state/
 trades.db
 *.db
+backtest_trades_*.csv
 
 # Dhan security master (large; re-downloaded on VM)
 security_id_list.csv

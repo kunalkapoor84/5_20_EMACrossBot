@@ -9,6 +9,7 @@ A production-ready Python automated trading system that executes an **EMA 5 / EM
   - **Bullish cross** → **BUY ATM Call**
   - **Bearish cross** → **BUY ATM Put**
   - Opposite cross → close the current option, buy a fresh ATM option in the new direction
+- **Entry confirmation**: after a crossover, the bot only buys once a candle **CLOSES** on the right side of EMA20 — close **above** EMA20 to buy a call (LONG), close **below** EMA20 to buy a put (SHORT). Entry happens on the **first** confirmed candle after the cross (not necessarily the cross candle). If price comes back through EMA20, the entry is skipped/kept pending.
 - **ATM strike**: nearest strike to live NIFTY spot, current-month expiry (resolved from the live option chain)
 - **Stop Loss**: 15 **premium points** from entry (below entry — long premium)
 - **Target**: 30 **premium points** from entry (above entry — long premium, 1:2 risk/reward)
@@ -137,6 +138,7 @@ All strategy parameters live in `config.py`:
 | `QUANTITY` | 1 | Lots traded |
 | `TRADE_OPTIONS` | True | Trade ATM options (vs futures) |
 | `OPTION_EXPIRY` | monthly | Option expiry to trade |
+| `REQUIRE_CLOSE_CONFIRMATION` | True | Enter only once a candle closes above/below EMA20 after a cross |
 | `PAPER_TRADING` | True | Paper vs live |
 
 ## Key Behaviors
@@ -144,6 +146,7 @@ All strategy parameters live in `config.py`:
 - **ATM options**: bullish cross buys the ATM **Call**, bearish cross buys the ATM **Put** (always long premium)
 - **Opposite crossover exit**: closes the current call/put, then buys a fresh ATM option in the new direction
 - **Completed candles only**: signals are only generated on fully closed 5-minute candles
+- **Entry confirmation (armed)**: a crossover only "arms" a pending entry — the call/put is bought on the **first candle that closes above (long) / below (short) EMA20**. If the cross candle itself closes on the wrong side, the bot waits for a later candle; a reverse crossover re-arms the opposite direction.
 - **No duplicates**: each candle is processed exactly once
 - **Broker authority**: on restart, the Dhan broker position takes precedence over local state
 - **Protective orders**: after entry fill, SL and target orders are placed (paper mode simulates them)

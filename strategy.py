@@ -106,6 +106,29 @@ class Strategy:
             reason="No crossover detected",
         )
 
+    def close_confirms_direction(self, direction: str, candle: dict) -> bool:
+        """Check whether a candle's close confirms a Long/Short entry against EMA20.
+
+        Used as a confirmation filter so we do NOT enter immediately on the raw
+        crossover. On a bullish cross we only BUY the call once a candle CLOSES
+        strictly above EMA20 (if price comes back down and closes at/below EMA20,
+        the long is skipped). Mirrored for the bearish side (close below EMA20).
+
+        Args:
+            direction: "LONG" or "SHORT"
+            candle: Candle dict with close and ema_slow (EMA20).
+
+        Returns:
+            True if the close confirms the direction, False otherwise.
+        """
+        close = candle["close"]
+        ema20 = candle["ema_slow"]
+        if direction == "LONG":
+            return close > ema20
+        if direction == "SHORT":
+            return close < ema20
+        return False
+
     def should_exit_for_crossover(
         self,
         current_direction: str | None,

@@ -119,6 +119,7 @@ def run_strategy():
     # Load and reconcile state on startup
     saved_state = state_mgr.load_state()
     broker_positions = order_manager.get_positions()
+    armed_direction = None
     if saved_state:
         reconciled = state_mgr.reconcile_with_broker(
             saved_state, broker_positions,
@@ -128,6 +129,9 @@ def run_strategy():
         risk_manager.daily_trade_count = reconciled.get("daily_trade_count", 0)
         risk_manager.session_active = reconciled.get("session_active", True)
         risk_manager._today_date = datetime.now(IST).strftime("%Y-%m-%d")
+        armed_direction = reconciled.get("armed_direction")
+        if risk_manager.position.direction is not None:
+            armed_direction = None
 
         if reconciled.get("direction") is not None:
             risk_manager.position.direction = reconciled["direction"]
@@ -213,6 +217,7 @@ def run_strategy():
                 )
                 order_manager.cancel_all_strategy_orders()
                 risk_manager.session_active = False
+                armed_direction = None
                 logger.info("Trading session completed for the day")
                 time.sleep(60)
                 continue
@@ -285,44 +290,52 @@ def run_strategy():
                     if in_trading_hours and risk_manager.session_active:
                         signal = strategy.detect_crossover(prev_candle, curr_candle)
 
-                        if signal.signal == Signal.LONG:
-                            if risk_manager.position.direction == "SHORT":
-                                # Exit SHORT and enter LONG
-                                _handle_exit(
-                                    order_manager, risk_manager, market_data,
-                                    strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER"
-                                )
-                                if risk_manager.can_trade():
-                                    _handle_entry(
-                                        order_manager, risk_manager, market_data,
-                                        strategy, trade_log, "LONG", curr_candle
-                                    )
-                            elif risk_manager.position.direction is None:
-                                # No position — enter LONG
-                                if risk_manager.can_trade():
-                                    _handle_entry(
-                                        order_manager, risk_manager, market_data,
-                                        strategy, trade_log, "LONG", curr_candle
-                                    )
+                        # Exit the held position on the OPPOSITE crossover (immediate)
+                        if signal.signal == Signal.SHORT and risk_manager.position.direction == "LONG":
+                            _handle_exit(
+                                order_manager, risk_manager, market_data,
+                                strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER"
+                            )
+                            armed_direction = "SHORT"
+                        elif signal.signal == Signal.LONG and risk_manager.position.direction == "SHORT":
+                            _handle_exit(
+                                order_manager, risk_manager, market_data,
+                                strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER"
+                            )
+                            armed_direction = "LONG"
 
-                        elif signal.signal == Signal.SHORT:
-                            if risk_manager.position.direction == "LONG":
-                                # Exit LONG and enter SHORT
-                                _handle_exit(
-                                    order_manager, risk_manager, market_data,
-                                    strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER"
-                                )
-                                if risk_manager.can_trade():
+                        # Update armed direction from a fresh crossover (when flat)
+                        if risk_manager.position.direction is None:
+                            if signal.signal == Signal.LONG:
+                                armed_direction = "LONG"
+                            elif signal.signal == Signal.SHORT:
+                                armed_direction = "SHORT"
+
+                            # Attempt entry once the candle CLOSES on the confirmed
+                            # side, since "armed" pending. Entry goes live on the
+                            # FIRST candle that closes above (LONG) / below (SHORT)
+                            # EMA20 after the crossover.
+                            if risk_manager.can_trade():
+                                if (armed_direction == "LONG"
+                                        and strategy.close_confirms_direction("LONG", curr_candle)):
+                                    _handle_entry(
+                                        order_manager, risk_manager, market_data,
+                                        strategy, trade_log, "LONG", curr_candle
+                                    )
+                                    armed_direction = None
+                                elif (armed_direction == "SHORT"
+                                        and strategy.close_confirms_direction("SHORT", curr_candle)):
                                     _handle_entry(
                                         order_manager, risk_manager, market_data,
                                         strategy, trade_log, "SHORT", curr_candle
                                     )
-                            elif risk_manager.position.direction is None:
-                                # No position — enter SHORT
-                                if risk_manager.can_trade():
-                                    _handle_entry(
-                                        order_manager, risk_manager, market_data,
-                                        strategy, trade_log, "SHORT", curr_candle
+                                    armed_direction = None
+                                elif armed_direction is not None:
+                                    logger.info(
+                                        "[%s] %s armed; close=%.2f not %s EMA20=%.2f - waiting",
+                                        candle_ts, armed_direction, curr_candle["close"],
+                                        "above" if armed_direction == "LONG" else "below",
+                                        curr_candle["ema_slow"],
                                     )
 
                     # Save state
@@ -347,6 +360,7 @@ def run_strategy():
                         strike=risk_manager.position.strike,
                         symbol=risk_manager.position.symbol,
                         expiry=risk_manager.position.expiry,
+                        armed_direction=armed_direction,
                     ))
 
                     last_processed_ts = candle_ts
@@ -383,6 +397,7 @@ def run_strategy():
             daily_trade_count=risk_manager.daily_trade_count,
             session_active=False,
             last_processed_candle_ts=last_processed_ts,
+            armed_direction=None,
         ))
 
         logger.info("Strategy stopped")

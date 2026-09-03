@@ -138,6 +138,7 @@ class Backtester:
 
             # State
             position_direction = None
+            armed_direction = None
             entry_price = 0.0
             entry_time = ""
             sl_price = 0.0
@@ -211,7 +212,7 @@ class Backtester:
                 bullish_cross = (prev_ema5 <= prev_ema20) and (curr_ema5 > curr_ema20)
                 bearish_cross = (prev_ema5 >= prev_ema20) and (curr_ema5 < curr_ema20)
 
-                # Handle crossover exit
+                # Handle crossover exit + re-arm the opposite direction
                 if position_direction is not None:
                     if (position_direction == "LONG" and bearish_cross) or \
                        (position_direction == "SHORT" and bullish_cross):
@@ -228,12 +229,28 @@ class Backtester:
                         trades.append(trade)
                         day_pnl += pnl
                         position_direction = None
+                        # Arm the new direction: on an opposite cross we exit and then
+                        # wait for the new direction's close confirmation before entering.
+                        armed_direction = "SHORT" if bearish_cross else "LONG"
                         # Don't reset consecutive_sl on crossover exit
 
-                # Enter new position if no position
-                if position_direction is None and consecutive_sl < config.MAX_CONSECUTIVE_SL:
+                # Update armed direction from a fresh crossover while flat
+                if position_direction is None:
                     if bullish_cross:
-                        position_direction = "LONG"
+                        armed_direction = "LONG"
+                    elif bearish_cross:
+                        armed_direction = "SHORT"
+
+                    # Enter once the candle CLOSES on the confirmed side of EMA20
+                    def _close_confirms(direction: str) -> bool:
+                        if not config.REQUIRE_CLOSE_CONFIRMATION:
+                            return True
+                        return (curr_close > curr_ema20) if direction == "LONG" else (curr_close < curr_ema20)
+
+                    if (armed_direction is not None
+                            and consecutive_sl < config.MAX_CONSECUTIVE_SL
+                            and _close_confirms(armed_direction)):
+                        position_direction = armed_direction
                         entry_price = curr_close
                         entry_time = curr_time
                         # Options are always long premium: SL below, target above
@@ -241,14 +258,7 @@ class Backtester:
                         target_price = entry_price + config.TARGET_POINTS
                         ema_fast_entry = curr_ema5
                         ema_slow_entry = curr_ema20
-                    elif bearish_cross:
-                        position_direction = "SHORT"
-                        entry_price = curr_close
-                        entry_time = curr_time
-                        sl_price = entry_price - config.STOP_LOSS_POINTS
-                        target_price = entry_price + config.TARGET_POINTS
-                        ema_fast_entry = curr_ema5
-                        ema_slow_entry = curr_ema20
+                        armed_direction = None
 
             # End-of-day square-off
             if position_direction is not None:

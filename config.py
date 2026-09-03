@@ -3,11 +3,11 @@
 import os
 
 # ---------------------------------------------------------------------------
-# Dhan API credentials — loaded from environment variables.
-# Do NOT hardcode credentials here.
+# Dhan API credentials — loaded ONLY from environment variables.
+# NEVER hardcode credentials here (the repo is shareable/public).
 # ---------------------------------------------------------------------------
-DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID", "1111206177")
-DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN", "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJ1c2VyUmVnaW9uIjoiUjEiLCJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzg4NDQ1OTgwLCJpYXQiOjE3ODgzNTk1ODAsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTExMjA2MTc3In0.xTprI13pDJ8leiwa1tbIQPQHFsx2Vi7df8zs4EdwRdaTrnkqf03YjfgqJVaseRV3K1bwtUGqdRUe3N0EMbvFqw")
+DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID", "")
+DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN", "")
 
 # ---------------------------------------------------------------------------
 # Instrument
@@ -45,6 +45,12 @@ PRODUCT_TYPE = "INTRADAY"  # Intraday for index/futures/options trading
 TIMEFRAME_MINUTES = 5  # 5-minute candles
 FAST_EMA = 5
 SLOW_EMA = 20
+
+# Require the signal candle to CLOSE on the correct side of EMA20 (SLOW_EMA)
+# before taking a trade, instead of entering immediately on the crossover.
+#   - Long entry only when close > EMA20 (if price comes back down, skip)
+#   - Short entry only when close < EMA20
+REQUIRE_CLOSE_CONFIRMATION = True
 
 # ---------------------------------------------------------------------------
 # Trading hours (IST)
