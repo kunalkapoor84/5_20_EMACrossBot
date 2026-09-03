@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Runtime artifacts (never commit)
+logs/
+excel_daily/
+state/
+trades.db
+*.db
+
+# Dhan security master (large; re-downloaded on VM)
+security_id_list.csv
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets (defense in depth — never commit)
+.env
+*.pem
+*.key
