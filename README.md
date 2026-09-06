@@ -64,7 +64,27 @@ export DHAN_ACCESS_TOKEN="your_access_token"
 
 You can also put them in your shell profile or a `.env` (if you use `python-dotenv`).
 
-### 3. Verify Dhan account access
+### 3. Set Telegram credentials (optional)
+
+The bot sends **trade entry/exit alerts**, a **startup alert**, and the **daily summary Excel file** to a Telegram chat.
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) to get a **bot token**.
+2. Message your bot once, then find your **chat ID** (e.g. via `https://api.telegram.org/bot<TOKEN>/getUpdates` → `message.chat.id`).
+3. Set these environment variables (leave empty to disable notifications):
+
+```bash
+export TELEGRAM_BOT_TOKEN="your_bot_token"
+export TELEGRAM_CHAT_ID="your_chat_id"
+```
+
+Test the connection:
+```bash
+python telegram_notifier.py
+```
+
+You should receive a test message ("🔔 Telegram Notifier Test") in the chat.
+
+### 4. Verify Dhan account access
 
 Before live use, verify:
 - **Data Plan** is active (required for candles/quotes/feed)
@@ -121,6 +141,91 @@ from main import emergency_square_off
 
 It closes any open strategy position, cancels pending orders, and verifies the account is flat.
 
+## Running on a Google Cloud VM (Background / 24/7)
+
+To run the bot continuously on a GCP VM (so it trades automatically every market open):
+
+```bash
+# 1. Clone + setup
+git clone https://github.com/kunalkapoor84/5_20_EMACrossBot.git
+cd 5_20_EMACrossBot
+sudo apt install -y python3-venv
+python3 -m venv venv
+source venv/bin/activate
+pip3 install -r requirements.txt
+
+# 2. Set credentials (each shell session)
+export DHAN_CLIENT_ID="your_client_id"
+export DHAN_ACCESS_TOKEN="your_access_token"
+export TELEGRAM_BOT_TOKEN="your_bot_token"
+export TELEGRAM_CHAT_ID="your_chat_id"
+
+# 3. Start in the background
+nohup venv/bin/python main.py > nohup.out 2>&1 &
+```
+
+Check it's running / watching output:
+```bash
+ps aux | grep main.py
+tail -f nohup.out
+tail -f logs/strategy.log
+```
+
+Stop it:
+```bash
+pkill -f main.py
+```
+
+**The bot keeps running on its own** — it waits for market open, trades 09:30–15:15 IST, squares off, and resumes the next open automatically. No need to restart daily **except for the Dhan token** (below).
+
+### Daily Dhan token refresh (tokens expire every 24h)
+
+Dhan access tokens expire every 24 hours, so each morning you must refresh the token and restart the bot:
+
+```bash
+export DHAN_ACCESS_TOKEN="NEW_TOKEN_FROM_PORTAL"
+pkill -f main.py
+nohup venv/bin/python main.py > nohup.out 2>&1 &
+```
+
+> `export` alone does **not** update an already-running process — you must also **restart** for the new token to take effect.
+
+### Systemd (survives VM reboots — recommended)
+
+For a true "set and forget" setup that auto-starts on VM boot:
+
+```bash
+sudo tee /etc/systemd/system/emacross.service > /dev/null <<'EOF'
+[Unit]
+Description=EMACross Trading Bot
+After=network.target
+
+[Service]
+User=$USER
+WorkingDirectory=/home/$USER/5_20_EMACrossBot
+ExecStart=/home/$USER/5_20_EMACrossBot/venv/bin/python main.py
+Environment=DHAN_CLIENT_ID=your_client_id
+Environment=DHAN_ACCESS_TOKEN=your_access_token
+Environment=TELEGRAM_BOT_TOKEN=your_bot_token
+Environment=TELEGRAM_CHAT_ID=your_chat_id
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable emacross
+sudo systemctl start emacross
+sudo systemctl status emacross
+```
+
+Restart the service after refreshing the token:
+```bash
+sudo systemctl restart emacross
+```
+
+
 ## Configuration
 
 All strategy parameters live in `config.py`:
@@ -140,6 +245,8 @@ All strategy parameters live in `config.py`:
 | `OPTION_EXPIRY` | monthly | Option expiry to trade |
 | `REQUIRE_CLOSE_CONFIRMATION` | True | Enter only once a candle closes above/below EMA20 after a cross |
 | `PAPER_TRADING` | True | Paper vs live |
+| `TELEGRAM_BOT_TOKEN` | env | Telegram bot token (via env var) |
+| `TELEGRAM_CHAT_ID` | env | Telegram chat ID (via env var) |
 
 ## Key Behaviors
 
@@ -182,4 +289,6 @@ All strategy parameters live in `config.py`:
 - Index data (`IDX_I`) has no tradable contract — the system trades **ATM index options** on NSE_FNO
 - Option premium leads/moves faster than the index; the 15/30 point SL/target are on the **premium** and may trigger on normal intraday swings
 - Never commit your Dhan credentials to version control
+- Dhan access tokens expire every 24 hours — refresh the token and restart the bot each morning
+- Telegram notifications are disabled until `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set
 - Run extensive paper/backtest validation before switching `PAPER_TRADING` to `False`
