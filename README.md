@@ -190,6 +190,12 @@ nohup venv/bin/python main.py > nohup.out 2>&1 &
 
 > `export` alone does **not** update an already-running process — you must also **restart** for the new token to take effect.
 
+**Convenience script:** `restart.sh` stops the bot, picks up the new token (from env var or as a fallback value in the file), and restarts it in one step. Get a fresh token, then run:
+
+```bash
+./restart.sh        # token from env var, or edit the file's DEFAULT_DHAN_ACCESS_TOKEN
+```
+
 ### Systemd (survives VM reboots — recommended)
 
 For a true "set and forget" setup that auto-starts on VM boot:
