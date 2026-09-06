@@ -48,7 +48,7 @@ class MarketData:
             instrument_type=self._data_instrument,
             from_date=from_date,
             to_date=to_date,
-            interval=5,
+            interval=config.TIMEFRAME_MINUTES,
             oi=False,
         )
 
@@ -68,7 +68,7 @@ class MarketData:
                     instrument_type=self._data_instrument,
                     from_date=from_date,
                     to_date=to_date,
-                    interval=5,
+                    interval=config.TIMEFRAME_MINUTES,
                     oi=False,
                 )
                 if response.get("status") != "success":
@@ -122,7 +122,7 @@ class MarketData:
             instrument_type=self._data_instrument,
             from_date=from_date,
             to_date=to_date,
-            interval=5,
+            interval=config.TIMEFRAME_MINUTES,
             oi=False,
         )
 
@@ -142,7 +142,7 @@ class MarketData:
                     instrument_type=self._data_instrument,
                     from_date=from_date,
                     to_date=to_date,
-                    interval=5,
+                    interval=config.TIMEFRAME_MINUTES,
                     oi=False,
                 )
                 if response.get("status") != "success":
@@ -274,7 +274,8 @@ class MarketData:
             response = self.dhan.client.ticker_data({exchange: [int(security_id)]})
             if response.get("status") == "success":
                 data = response["data"]
-                ltp = float(data[exchange][security_id]["last_price"])
+                feed = data.get("data", data)
+                ltp = float(feed[exchange][str(security_id)]["last_price"])
                 return ltp
             else:
                 logger.error("LTP fetch failed: %s", response.get("remarks"))

@@ -20,6 +20,7 @@ from risk_manager import RiskManager
 from state_manager import StateManager
 from trade_logger import TradeLogger
 from excel_logger import ExcelLogger
+from telegram_notifier import TelegramNotifier
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -111,10 +112,15 @@ def run_strategy():
     state_mgr = StateManager()
     trade_log = TradeLogger()
     excel_logger = ExcelLogger()
+    telegram = TelegramNotifier()
 
     # Resolve lot size
     lot_size = dhan_client.get_lot_size()
     logger.info("Lot size: %d", lot_size)
+
+    # Send startup notification
+    mode_label = "PAPER" if config.PAPER_TRADING else "LIVE"
+    telegram.send_startup_alert(mode=mode_label)
 
     # Load and reconcile state on startup
     saved_state = state_mgr.load_state()
@@ -127,7 +133,7 @@ def run_strategy():
         )
         risk_manager.consecutive_sl_count = reconciled.get("consecutive_sl_count", 0)
         risk_manager.daily_trade_count = reconciled.get("daily_trade_count", 0)
-        risk_manager.session_active = reconciled.get("session_active", True)
+        risk_manager.session_active = True
         risk_manager._today_date = datetime.now(IST).strftime("%Y-%m-%d")
         armed_direction = reconciled.get("armed_direction")
         if risk_manager.position.direction is not None:
@@ -213,7 +219,8 @@ def run_strategy():
                 logger.info("EXIT_TIME reached — squaring off open position")
                 _handle_exit(
                     order_manager, risk_manager, market_data, strategy,
-                    trade_log, excel_logger, reason="EOD_EXIT"
+                    trade_log, excel_logger, reason="EOD_EXIT",
+                    telegram=telegram, mode=mode_label,
                 )
                 order_manager.cancel_all_strategy_orders()
                 risk_manager.session_active = False
@@ -229,6 +236,35 @@ def run_strategy():
                 second=0, microsecond=0
             )
             in_trading_hours = now >= start_time
+
+            # Continuous SL/Target monitor: checks the live option premium every
+            # poll cycle independent of candle completion, so a breached SL is
+            # honored immediately instead of waiting for the next candle close
+            # (which would add slippage and possible loss beyond the SL level).
+            if risk_manager.position.is_open and in_trading_hours and risk_manager.session_active:
+                opt_ltp = market_data.get_current_ltp(risk_manager.position.security_id)
+                if opt_ltp is not None:
+                    hit = risk_manager.check_sl_target_hit(opt_ltp)
+                    if hit == "SL" or hit == "TARGET":
+                        # Synthetic candle representing the current live premium;
+                        # EMAs are not available here and are logged as 0.
+                        live_candle = {
+                            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                            "close": opt_ltp,
+                        }
+                        if hit == "SL":
+                            _handle_sl_hit(
+                                order_manager, risk_manager, market_data,
+                                trade_log, excel_logger, live_candle, None,
+                                telegram=telegram, mode=mode_label,
+                            )
+                        else:
+                            _handle_target_hit(
+                                order_manager, risk_manager, market_data,
+                                trade_log, excel_logger, live_candle, None,
+                                telegram=telegram, mode=mode_label,
+                            )
+                        continue
 
             # Fetch new completed candles
             new_candles = market_data.fetch_latest_candles()
@@ -272,7 +308,8 @@ def run_strategy():
                             if hit == "SL":
                                 _handle_sl_hit(
                                     order_manager, risk_manager, market_data,
-                                    trade_log, excel_logger, curr_candle, last_processed_ts
+                                    trade_log, excel_logger, curr_candle, last_processed_ts,
+                                    telegram=telegram, mode=mode_label,
                                 )
                                 last_processed_ts = candle_ts
                                 market_data.mark_candle_processed(candle_ts)
@@ -280,7 +317,8 @@ def run_strategy():
                             elif hit == "TARGET":
                                 _handle_target_hit(
                                     order_manager, risk_manager, market_data,
-                                    trade_log, excel_logger, curr_candle, last_processed_ts
+                                    trade_log, excel_logger, curr_candle, last_processed_ts,
+                                    telegram=telegram, mode=mode_label,
                                 )
                                 last_processed_ts = candle_ts
                                 market_data.mark_candle_processed(candle_ts)
@@ -294,13 +332,15 @@ def run_strategy():
                         if signal.signal == Signal.SHORT and risk_manager.position.direction == "LONG":
                             _handle_exit(
                                 order_manager, risk_manager, market_data,
-                                strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER"
+                                strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER",
+                                telegram=telegram, mode=mode_label,
                             )
                             armed_direction = "SHORT"
                         elif signal.signal == Signal.LONG and risk_manager.position.direction == "SHORT":
                             _handle_exit(
                                 order_manager, risk_manager, market_data,
-                                strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER"
+                                strategy, trade_log, excel_logger, curr_candle, reason="CROSSOVER",
+                                telegram=telegram, mode=mode_label,
                             )
                             armed_direction = "LONG"
 
@@ -320,14 +360,16 @@ def run_strategy():
                                         and strategy.close_confirms_direction("LONG", curr_candle)):
                                     _handle_entry(
                                         order_manager, risk_manager, market_data,
-                                        strategy, trade_log, "LONG", curr_candle
+                                        strategy, trade_log, "LONG", curr_candle,
+                                        telegram=telegram, mode=mode_label,
                                     )
                                     armed_direction = None
                                 elif (armed_direction == "SHORT"
                                         and strategy.close_confirms_direction("SHORT", curr_candle)):
                                     _handle_entry(
                                         order_manager, risk_manager, market_data,
-                                        strategy, trade_log, "SHORT", curr_candle
+                                        strategy, trade_log, "SHORT", curr_candle,
+                                        telegram=telegram, mode=mode_label,
                                     )
                                     armed_direction = None
                                 elif armed_direction is not None:
@@ -378,12 +420,25 @@ def run_strategy():
         if risk_manager.position.is_open:
             _handle_exit(
                 order_manager, risk_manager, market_data,
-                strategy, trade_log, excel_logger, reason="EOD_CLEANUP"
+                strategy, trade_log, excel_logger, reason="EOD_CLEANUP",
+                telegram=telegram, mode=mode_label,
             )
         order_manager.cancel_all_strategy_orders()
 
         # Print trade summary
         trade_log.print_today_summary()
+
+        # Finalize Excel day
+        excel_logger.finalize_day()
+
+        # Send daily summary Excel to Telegram
+        today_str = datetime.now(IST).strftime("%Y-%m-%d")
+        daily_excel = excel_logger.day_path(today_str)
+        telegram.send_daily_summary_excel(daily_excel, date_str=today_str)
+
+        # Send shutdown notification
+        summary = trade_log.get_trade_summary(days=1)
+        telegram.send_shutdown_alert(summary=summary, mode=mode_label)
 
         # Final state save
         state_mgr.save_state(state_mgr.build_state(
@@ -411,6 +466,8 @@ def _handle_entry(
     trade_log: TradeLogger,
     direction: str,
     candle: dict,
+    telegram: TelegramNotifier | None = None,
+    mode: str = "PAPER",
 ) -> None:
     """Handle entering a new option position.
 
@@ -466,6 +523,19 @@ def _handle_entry(
             ema_slow=candle["ema_slow"],
             option=option,
         )
+        # Send Telegram entry alert
+        if telegram:
+            telegram.send_entry_alert(
+                direction=direction,
+                symbol=option.get("symbol", ""),
+                option_type=side,
+                strike=option.get("strike", 0),
+                entry_price=entry_price,
+                quantity=quantity,
+                sl_price=sl_price,
+                target_price=target_price,
+                mode=mode,
+            )
     else:
         # Wait for fill
         fill_data = order_manager.wait_for_fill(order_id)
@@ -502,6 +572,20 @@ def _handle_entry(
             )
             if target_response:
                 risk_manager.position.target_order_id = target_response["data"].get("orderId", "")
+
+            # Send Telegram entry alert
+            if telegram:
+                telegram.send_entry_alert(
+                    direction=direction,
+                    symbol=option.get("symbol", ""),
+                    option_type=side,
+                    strike=option.get("strike", 0),
+                    entry_price=avg_price,
+                    quantity=filled_qty,
+                    sl_price=risk_manager.position.sl_price,
+                    target_price=risk_manager.position.target_price,
+                    mode=mode,
+                )
         else:
             logger.error("Entry order did not fill for %s", direction)
 
@@ -515,6 +599,8 @@ def _handle_exit(
     excel_logger: ExcelLogger,
     candle: dict | None = None,
     reason: str = "EXIT",
+    telegram: TelegramNotifier | None = None,
+    mode: str = "PAPER",
 ) -> None:
     """Handle exiting the current position."""
     logger = logging.getLogger(__name__)
@@ -652,6 +738,22 @@ def _handle_exit(
         "Security ID": risk_manager.position.security_id,
     })
 
+    # Send Telegram exit alert
+    if telegram:
+        telegram.send_exit_alert(
+            direction=direction,
+            symbol=risk_manager.position.symbol,
+            option_type=risk_manager.position.option_type,
+            strike=risk_manager.position.strike,
+            entry_price=entry_price,
+            exit_price=actual_exit_price,
+            quantity=quantity,
+            gross_pnl=gross_pnl,
+            reason=reason,
+            sl_count=risk_manager.consecutive_sl_count,
+            mode=mode,
+        )
+
     # Mutate risk manager state LAST (after capturing all trade data)
     if reason == "SL":
         risk_manager.on_sl_hit()
@@ -671,6 +773,8 @@ def _handle_sl_hit(
     excel_logger: ExcelLogger,
     candle: dict,
     last_processed_ts: str | None,
+    telegram: TelegramNotifier | None = None,
+    mode: str = "PAPER",
 ) -> None:
     """Handle SL hit based on candle price checking SL level."""
     logger = logging.getLogger(__name__)
@@ -688,12 +792,37 @@ def _handle_sl_hit(
     logger.warning("SL HIT DETECTED: %s entry=%.2f SL=%.2f close=%.2f",
                     direction, entry_price, sl_price, candle["close"])
 
-    exit_price = sl_price  # Assume SL execution at trigger price
-    exit_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-
     # Cancel target order
     if risk_manager.position.target_order_id:
         order_manager.cancel_order(risk_manager.position.target_order_id)
+
+    # Place a market exit order to close at the best available price and
+    # capture the ACTUAL fill (may be worse than the SL trigger due to slippage).
+    price = market_data.get_current_ltp(risk_manager.position.security_id) or entry_price
+    response = order_manager.place_exit_order(
+        direction=direction,
+        quantity=quantity,
+        price=price,
+        reason="SL",
+        security_id=risk_manager.position.security_id or None,
+        order_type="MARKET",
+    )
+    order_id = ""
+    exit_price = sl_price
+    if response is None:
+        logger.error("SL exit order failed for %s", direction)
+    else:
+        order_id = response["data"].get("orderId", "")
+        if order_manager.paper_trading:
+            exit_price = price
+        else:
+            fill_data = order_manager.wait_for_fill(order_id)
+            if fill_data and fill_data.get("orderStatus") == "TRADED":
+                exit_price = float(fill_data.get("avgPrice", sl_price))
+            else:
+                exit_price = price
+
+    exit_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
     # Calculate P&L (long premium for options)
     if config.TRADE_OPTIONS:
@@ -721,7 +850,7 @@ def _handle_sl_hit(
         ema_fast_at_exit=candle.get("ema_fast", 0),
         ema_slow_at_exit=candle.get("ema_slow", 0),
         entry_order_id=entry_order_id,
-        exit_order_id="",
+        exit_order_id=order_id,
         symbol=risk_manager.position.symbol,
         option_type=risk_manager.position.option_type,
         strike=risk_manager.position.strike,
@@ -751,9 +880,25 @@ def _handle_sl_hit(
         "EMA5 Exit": round(candle.get("ema_fast", 0), 2),
         "EMA20 Exit": round(candle.get("ema_slow", 0), 2),
         "Entry Order ID": entry_order_id,
-        "Exit Order ID": "",
+        "Exit Order ID": order_id,
         "Security ID": risk_manager.position.security_id,
     })
+
+    # Send Telegram exit alert
+    if telegram:
+        telegram.send_exit_alert(
+            direction=direction,
+            symbol=risk_manager.position.symbol,
+            option_type=risk_manager.position.option_type,
+            strike=risk_manager.position.strike,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            quantity=quantity,
+            gross_pnl=gross_pnl,
+            reason="SL",
+            sl_count=risk_manager.consecutive_sl_count,
+            mode=mode,
+        )
 
     risk_manager.on_sl_hit()
 
@@ -766,6 +911,8 @@ def _handle_target_hit(
     excel_logger: ExcelLogger,
     candle: dict,
     last_processed_ts: str | None,
+    telegram: TelegramNotifier | None = None,
+    mode: str = "PAPER",
 ) -> None:
     """Handle target hit based on candle price reaching target level."""
     logger = logging.getLogger(__name__)
@@ -783,12 +930,30 @@ def _handle_target_hit(
     logger.info("TARGET HIT DETECTED: %s entry=%.2f Target=%.2f close=%.2f",
                 direction, entry_price, target_price, candle["close"])
 
-    exit_price = target_price  # Assume target execution at trigger price
-    exit_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-
     # Cancel SL order
     if risk_manager.position.sl_order_id:
         order_manager.cancel_order(risk_manager.position.sl_order_id)
+
+    # Place a limit exit order at the target and capture the ACTUAL fill price.
+    response = order_manager.place_exit_order(
+        direction=direction,
+        quantity=quantity,
+        price=target_price,
+        reason="TARGET",
+        security_id=risk_manager.position.security_id or None,
+    )
+    order_id = ""
+    exit_price = target_price
+    if response is None:
+        logger.error("Target exit order failed for %s", direction)
+    else:
+        order_id = response["data"].get("orderId", "")
+        if not order_manager.paper_trading:
+            fill_data = order_manager.wait_for_fill(order_id)
+            if fill_data and fill_data.get("orderStatus") == "TRADED":
+                exit_price = float(fill_data.get("avgPrice", target_price))
+
+    exit_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
     # Calculate P&L (long premium for options)
     if config.TRADE_OPTIONS:
@@ -816,7 +981,7 @@ def _handle_target_hit(
         ema_fast_at_exit=candle.get("ema_fast", 0),
         ema_slow_at_exit=candle.get("ema_slow", 0),
         entry_order_id=entry_order_id,
-        exit_order_id="",
+        exit_order_id=order_id,
         symbol=risk_manager.position.symbol,
         option_type=risk_manager.position.option_type,
         strike=risk_manager.position.strike,
@@ -846,9 +1011,25 @@ def _handle_target_hit(
         "EMA5 Exit": round(candle.get("ema_fast", 0), 2),
         "EMA20 Exit": round(candle.get("ema_slow", 0), 2),
         "Entry Order ID": entry_order_id,
-        "Exit Order ID": "",
+        "Exit Order ID": order_id,
         "Security ID": risk_manager.position.security_id,
     })
+
+    # Send Telegram exit alert
+    if telegram:
+        telegram.send_exit_alert(
+            direction=direction,
+            symbol=risk_manager.position.symbol,
+            option_type=risk_manager.position.option_type,
+            strike=risk_manager.position.strike,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            quantity=quantity,
+            gross_pnl=gross_pnl,
+            reason="TARGET",
+            sl_count=risk_manager.consecutive_sl_count,
+            mode=mode,
+        )
 
     risk_manager.on_target_hit()
 

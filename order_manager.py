@@ -137,6 +137,7 @@ class OrderManager:
         security_id: str | None = None,
         exchange_segment: str | None = None,
         product_type: str | None = None,
+        order_type: str | None = None,
     ) -> dict[str, Any] | None:
         """Place a limit exit order (SELL the ATM call/put to close).
 
@@ -148,6 +149,8 @@ class OrderManager:
             security_id: The option security to sell
             exchange_segment: Override exchange segment
             product_type: Override product type
+            order_type: LIMIT (default) or MARKET. For MARKET exits a real
+                        fill price is obtained; price is ignored for the order.
 
         Returns:
             Order response dict or None if failed/paper.
@@ -157,10 +160,11 @@ class OrderManager:
         sec_id = security_id or self.dhan.get_trading_security_id()
         txn_type = self._txn_for_close(direction)
         tag = self._next_tag(f"EXIT_{reason}")
+        otype = order_type or LIMIT
 
         logger.info(
-            "Placing %s exit order (%s): qty=%d price=%.2f tag=%s security_id=%s",
-            direction, reason, quantity, price, tag, sec_id
+            "Placing %s exit order (%s): qty=%d price=%.2f type=%s tag=%s security_id=%s",
+            direction, reason, quantity, price, otype, tag, sec_id
         )
 
         if self.paper_trading:
@@ -181,7 +185,7 @@ class OrderManager:
                 exchange_segment=segment,
                 transaction_type=txn_type,
                 quantity=quantity,
-                order_type=LIMIT,
+                order_type=otype,
                 product_type=product,
                 price=price,
                 validity=DAY,

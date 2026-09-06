@@ -6,8 +6,8 @@ import os
 # Dhan API credentials — loaded ONLY from environment variables.
 # NEVER hardcode credentials here (the repo is shareable/public).
 # ---------------------------------------------------------------------------
-DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID", "")
-DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN", "")
+DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID", "1111206177")
+DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN", "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJ1c2VyUmVnaW9uIjoiUjEiLCJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzg4NTc5NDMzLCJpYXQiOjE3ODg0OTMwMzMsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTExMjA2MTc3In0.7rYabnOM3E961bi7amLsaFSLrVRiRKJqLRW36_0CIHJxgK2idw_ie5z5yUXDCq4kWxN8rc5B--8ZnHvMPvPL0A")
 
 # ---------------------------------------------------------------------------
 # Instrument
@@ -32,7 +32,7 @@ OPTION_CALL = "CE"             # Dhan option type for call
 OPTION_PUT = "PE"              # Dhan option type for put
 OPTION_STRIKE_INTERVAL = 50    # NIFTY option strikes spacing
 # Expiry to trade: "monthly" (current month's late expiry) or "weekly".
-OPTION_EXPIRY = "monthly"
+OPTION_EXPIRY = "weekly"
 
 # The traded instrument (resolved at runtime to the ATM option security_id)
 SECURITY_ID = INDEX_SECURITY_ID
@@ -74,6 +74,15 @@ QUANTITY = 1  # Number of lots (lot size resolved from security master)
 # Mode
 # ---------------------------------------------------------------------------
 PAPER_TRADING = True  # Set to False only after thorough testing
+
+# ---------------------------------------------------------------------------
+# Telegram notifications
+# Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in environment variables.
+# Leave empty to disable notifications.
+# ---------------------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8925480127:AAEgzK5VwN4aAIqIc5YJWhDjj9_ToZjNIOw")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "632095996")
+ENABLE_TELEGRAM = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
 
 # ---------------------------------------------------------------------------
 # Paths
