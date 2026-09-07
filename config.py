@@ -97,7 +97,7 @@ LOG_FILE = os.path.join(LOG_DIR, "strategy.log")
 # Data
 # ---------------------------------------------------------------------------
 HISTORICAL_BARS = 100  # Enough history for EMA warm-up
-POLL_INTERVAL_SECONDS = 10  # How often to check for new candles
+POLL_INTERVAL_SECONDS = 30  # How often to check SL/target; candle data polled at each 5-min boundary
 
 # ---------------------------------------------------------------------------
 # Candle completion buffer (seconds after candle close to consider it complete)

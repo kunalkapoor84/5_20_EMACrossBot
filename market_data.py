@@ -28,7 +28,6 @@ class MarketData:
         self._data_security_id = dhan_client.get_data_security_id()
         self._data_exchange = dhan_client.get_data_exchange()
         self._data_instrument = "INDEX"
-        self._use_fallback_data = False
 
     def fetch_historical_candles(self, days: int = 5) -> pd.DataFrame:
         """Fetch recent 5-minute candles for EMA warm-up.
@@ -55,11 +54,13 @@ class MarketData:
         if response.get("status") != "success":
             logger.error("Failed to fetch historical candles from %s: %s",
                          self._data_exchange, response.get("remarks"))
-            # Try fallback to NIFTY futures data if index data is unavailable
-            if not self._use_fallback_data:
+            # Fall back to NIFTY futures data if index data is unavailable.
+            # Use the real futures security id (the options trading id is empty
+            # until the first entry), so a transient failure never locks us
+            # onto an empty security id.
+            if self._data_instrument == "INDEX" and self.dhan.resolve_nifty_futures():
                 logger.warning("Attempting fallback to NIFTY futures data")
-                self._use_fallback_data = True
-                self._data_security_id = self.dhan.get_trading_security_id()
+                self._data_security_id = self.dhan.resolve_nifty_futures()
                 self._data_exchange = self.dhan.get_trading_exchange()
                 self._data_instrument = "FUTIDX"
                 response = self.dhan.client.intraday_minute_data(
@@ -73,7 +74,6 @@ class MarketData:
                 )
                 if response.get("status") != "success":
                     logger.error("Fallback data fetch also failed: %s", response.get("remarks"))
-                    return pd.DataFrame()
             else:
                 return pd.DataFrame()
 
@@ -112,7 +112,15 @@ class MarketData:
         Returns only NEW completed candles that haven't been processed before.
         """
         now = datetime.now(IST)
-        # Fetch last 2 hours of data to capture recent candles
+        # Fetch candle data only shortly after each 5-minute boundary. A candle
+        # is only "completed" on the boundary, so hitting the API every poll
+        # cycle is wasteful and trips Dhan's rate limits (DH-904). SL/target
+        # monitoring still runs every cycle via ticker_data.
+        seconds_into_slot = (now.minute % config.TIMEFRAME_MINUTES) * 60 + now.second
+        if not (config.CANDLE_BUFFER_SECONDS <= seconds_into_slot < 90):
+            return pd.DataFrame()
+
+        # Fetch 3 hours of data to capture recent candles
         from_date = (now - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
         to_date = now.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -129,11 +137,13 @@ class MarketData:
         if response.get("status") != "success":
             logger.error("Failed to fetch latest candles from %s: %s",
                          self._data_exchange, response.get("remarks"))
-            # Try fallback to NIFTY futures data if index data is unavailable
-            if not self._use_fallback_data:
+            # Fall back to NIFTY futures data if index data is unavailable.
+            # Use the real futures security id (the options trading id is empty
+            # until the first entry), so a transient failure never locks us
+            # onto an empty security id.
+            if self._data_instrument == "INDEX" and self.dhan.resolve_nifty_futures():
                 logger.warning("Attempting fallback to NIFTY futures data")
-                self._use_fallback_data = True
-                self._data_security_id = self.dhan.get_trading_security_id()
+                self._data_security_id = self.dhan.resolve_nifty_futures()
                 self._data_exchange = self.dhan.get_trading_exchange()
                 self._data_instrument = "FUTIDX"
                 response = self.dhan.client.intraday_minute_data(
@@ -147,7 +157,6 @@ class MarketData:
                 )
                 if response.get("status") != "success":
                     logger.error("Fallback data fetch also failed: %s", response.get("remarks"))
-                    return pd.DataFrame()
             else:
                 return pd.DataFrame()
 
