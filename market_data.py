@@ -74,10 +74,14 @@ class MarketData:
                 )
                 if response.get("status") != "success":
                     logger.error("Fallback data fetch also failed: %s", response.get("remarks"))
+                    return pd.DataFrame()
             else:
                 return pd.DataFrame()
 
-        data = response["data"]
+        data = response.get("data")
+        if data is None:
+            logger.error("No data in response from %s", self._data_exchange)
+            return pd.DataFrame()
         df = pd.DataFrame(data)
 
         if df.empty:
@@ -157,10 +161,14 @@ class MarketData:
                 )
                 if response.get("status") != "success":
                     logger.error("Fallback data fetch also failed: %s", response.get("remarks"))
+                    return pd.DataFrame()
             else:
                 return pd.DataFrame()
 
-        data = response["data"]
+        data = response.get("data")
+        if data is None:
+            logger.error("No data in response from %s", self._data_exchange)
+            return pd.DataFrame()
         df = pd.DataFrame(data)
 
         if df.empty:
